@@ -1,7 +1,25 @@
 const { Client, GatewayIntentBits, Partials, DMChannel } = require('discord.js');
 const { token } = require('./config.json');
+//https://discord.com/api/oauth2/authorize?client_id=1127381458986750043&permissions=268437504&scope=bot
 
 const fs = require('fs');
+
+var alphabet = new Array;
+fs.readFile('./alphabet.txt', 'utf-8', (err, data) => {
+    if (err) {
+        console.error(err);
+        return;
+    }
+    alphabet = data.split('\n');
+})
+var words = new Array;
+    fs.readFile('./words.txt', 'utf-8', (err, data) => {
+    if (err) {
+        console.error(err);
+        return;
+    }
+    words = data.split('\n');
+})
 
 const client = new Client({
     intents: [
@@ -78,7 +96,8 @@ async function harvest(message, guildId, technical) {
 
     // Iterate over every server member that isn't a bot
     res.forEach(async (member) => {
-        if (member.bot || member.id == 1127381458986750043n) return;
+        console.log(member.username);
+        if (member.bot || member.id == 1127381458986750043) return;
 
         // Check if the user has sent any DMs
         const dmChannel = await member.createDM();
@@ -149,22 +168,53 @@ async function recordResponse(message, num, guild, messageLink, technical) {
 
 function recordVotes(votesData, guild, messageLink) {
     const votes = require('./data/' + guild + '_votes.json');
+    const screens = require('./data/' + guild + '_screens.json');
+    var out = ''
 
     for (var vote in votesData) { 
         var content = votesData[vote];
         content = content.replace('[', '').replace(']', '');
         const split = content.split(' ');
 
-        votes[messageLink.author.username + " [" + split[0] + "]"] = content;
+        if (screens[split[0]] !== undefined) {
+            var letters = new Array;
+            var valid = true;
+
+            for (var lett in screens[split[0]]) {
+                if (!split[1].includes(lett)) {
+                    valid = false;
+                    messageLink.channel.send(split[0] + ' missing letter: ' + lett);
+                }
+            }
+
+            for (var lett in split[1]) {
+                if (letters.includes(split[1].charAt(lett))) {
+                    valid = false;
+                    messageLink.channel.send(split[0] + ' has duplicate letter: ' + split[1].charAt(lett));
+                }
+                letters.push(split[1].charAt(lett));
+                console.log(letters);
+            }
+
+            if (valid) {
+                out += 'Vote recorded on screen ' + split[0] + '\n'
+                
+            }
+        }
+        else {
+            messageLink.channel.send('Screen ' + split[0] + ' does not exist');
+        }
+
+        votes[messageLink.author.username + " [" + split[0] + "]"] = content;        
     }
 
     saveVotes(votes, guild);
 
-    messageLink.channel.send('Votes recorded, thanks for voting!');
+    if (out !== '') messageLink.channel.send(out + 'Votes recorded, thanks for voting!');
 }
 
 function saveData(data, guild) {
-    fs.writeFile('./data/' + guild + '_data.json', JSON.stringify(data), {flag: 'w'}, err => {
+    fs.writeFile('./data/' + guild + '_data.json', JSON.stringify(data), {flag: 'w+'}, err => {
         if (err) {
           console.error(err);
         }
@@ -172,7 +222,7 @@ function saveData(data, guild) {
 }
 
 function saveResponses(responses, guild) {
-    fs.writeFile('./data/' + guild + '_responses.json', JSON.stringify(responses), {flag: 'w'}, err => {
+    fs.writeFile('./data/' + guild + '_responses.json', JSON.stringify(responses), {flag: 'w+'}, err => {
         if (err) {
           console.error(err);
         }
@@ -180,7 +230,7 @@ function saveResponses(responses, guild) {
 }
 
 function saveVotes(votes, guild) {
-    fs.writeFile('./data/' + guild + '_votes.json', JSON.stringify(votes), {flag: 'w'}, err => {
+    fs.writeFile('./data/' + guild + '_votes.json', JSON.stringify(votes), {flag: 'w+'}, err => {
         if (err) {
           console.error(err);
         }
@@ -200,7 +250,7 @@ function printResponses(message, guild) {
     message.channel.send('```\n(' + num + ' responses)' + out + '```');
 }
 
-function printVotes(message, guild) {
+async function printVotes(message, guild) {
     const responses = require('./data/' + guild + '_votes.json');
     var num = 0;
     var out = "\n"
@@ -213,6 +263,70 @@ function printVotes(message, guild) {
     }
 
     message.channel.send('```\n(' + num + ' votes)' + out + '```');
+}
+
+async function makeVotingScreens(message, sections, guild, min) {
+    const responsesJSON = require('./data/' + guild + '_responses.json');
+    shuffleArray(words);
+    var num = 0;
+    var screens = 1;
+    var out = {};
+    var responses = new Array;
+    for (var contestant in responsesJSON) {
+        responses[num] = responsesJSON[contestant]
+        num++;
+    }
+
+    for (let i = 0; i < sections; i++) {
+        shuffleArray(responses);
+
+        if (Math.floor(num / (i + 1)) >= min) {
+            screens = i + 1;
+        }
+        else {
+            screens = Math.floor(num / min);
+            if (screens === 0) screens = 1;
+        }
+
+        var count = 0;
+        for (let j = 0; j < screens; j++) {
+            var screen = {};
+            for (let k = 0; k < Math.ceil((num / screens) - (j / screens)); k++) {
+                screen[alphabet[k].slice(0,-1)] = responses[count];
+                count++;
+            }
+            out[words[0].slice(0,-1)] = screen;
+            words.shift();
+        }
+    }
+
+    fs.writeFile('./data/' + guild + '_screens.json', JSON.stringify(out), {flag: 'w+'}, err => {
+        if (err) {
+          console.error(err);
+        }
+    });
+
+    outputVotingScreens(out);
+
+    message.channel.send('!');
+}
+
+function outputVotingScreens(out) {
+    var text = ''
+
+    for (var screen in out) {
+        text += screen + '\n';
+        for (var letter in out[screen]) {
+            text += letter + ' | ' + out[screen][letter] + '\n';
+        }
+        text += '\n';
+    }
+
+    fs.writeFile('./output.txt', text, {flag: 'w+'}, err => {
+        if (err) {
+          console.error(err);
+        }
+    });
 }
 
 const prefix = '-w'
@@ -245,7 +359,7 @@ client.on('messageCreate', message => {
     else if (com === "votes") {
         printVotes(message, guild);
     }
-    else if (com == 'clear') {
+    else if (com === "clear") {
         fs.writeFile('./data/' + guild + '_responses.json', '{}', {flag: 'w'}, err => {
             if (err) {
               console.error(err);
@@ -261,7 +375,20 @@ client.on('messageCreate', message => {
         saveData(data, guild);
         message.channel.send('Cleared');
     }
-    else if (com == "setup") {
+    else if (com === "generate") {
+        if (args.length > 1) {
+            if (args.length > 2) {
+                makeVotingScreens(message, parseInt(args[1]), guild, parseInt(args[2]));
+            }
+            else {
+                makeVotingScreens(message, parseInt(args[1]), guild, 10);
+            }
+        }
+        else {
+            makeVotingScreens(message, 1, guild, 10);
+        }
+    }
+    else if (com === "setup") {
         fs.writeFile('./data/' + guild + '_responses.json', '{}', {flag: 'w+'}, err => {
             if (err) {
               console.error(err);
@@ -284,14 +411,13 @@ client.on('messageCreate', message => {
     }
 })
 
- // if (com === "echo") {
-//     if (args.length > 1) {
-//         args.shift();
-//         message.channel.send(args.join(" "));
-//     }
-//     else {
-//         message.channel.send("Error: Send something to echo");
-//     }
-// }
+function shuffleArray(array) {
+    for (var i = array.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var temp = array[i];
+        array[i] = array[j];
+        array[j] = temp;
+    }
+}
 
 client.login(token);
