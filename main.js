@@ -46,7 +46,7 @@ async function harvestVotes(message, guildId) {
 
     // Iterate over every server member that isn't a bot
     res.forEach(async (member) => {
-        if (member.bot || member.id == 1127381458986750043n) return;
+        if (member.user.bot || member.id == "1127381458986750043") return;
 
         // Check if the user has sent any DMs
         var dmChannel;
@@ -100,7 +100,7 @@ async function harvest(message, guildId, technical) {
 
     // Iterate over every server member that isn't a bot
     res.forEach(async (member) => {
-        if (member.bot || member.id === "1127381458986750043") return;
+        if (member.user.bot || member.id === "1127381458986750043") return;
 
         // Check if the user has sent any DMs
         var dmChannel;
@@ -108,7 +108,7 @@ async function harvest(message, guildId, technical) {
             dmChannel = await member.createDM();
         }
         catch {
-            console.log("Could not create DM with id " + member.id + " (" + member.username + ")");
+            console.log("Could not create DM with id " + member.id + " (" + member.user.username + ")");
             return;
         }
         const lastMessageId = dmChannel.lastMessageId;
@@ -117,7 +117,13 @@ async function harvest(message, guildId, technical) {
         // Check DM is more recent than last harvest, and edit response if so
         if (mostRecent < lastMessageId) {
             const recentMessages = await dmChannel.messages.fetch({ limit: 10 });
-            if (dmChannel.lastMessage.author.bot) return;
+            try {
+                if (dmChannel.lastMessage.author.bot) return;
+            }
+            catch {
+                console.log('dmChannel lastMessage issue\n' + dmChannel.lastMessage);
+                return;
+            }
             const filteredMessages = recentMessages.filter(message => {
                 return (message.id > mostRecent) && !message.author.bot && (member.id !== "1127381458986750043");
             }).reverse();
@@ -257,7 +263,7 @@ function printResponses(message, guild) {
 
     if (out.length < 1900) message.channel.send('```\n(' + num + ' responses)' + out + '```');
     else message.channel.send('Responses printed in output.txt');
-    fs.writeFile('./output.txt', out, {flag: 'w+'}, err => {
+    fs.writeFile('./output.txt', '(' + num + ' responses)' + out, {flag: 'w+'}, err => {
         if (err) {
           console.error(err);
         }
@@ -375,7 +381,7 @@ client.on('messageCreate', async message => {
     else if (com === "hvotes" || com === "harvestvotes") {
         const time = new Date();
         await harvestVotes(message, guild);
-        
+        message.channel.send('Vote harvesting complete in ' + (new Date() - time) + 'ms');
     }
     else if (com === "responses") {
         printResponses(message, guild);
