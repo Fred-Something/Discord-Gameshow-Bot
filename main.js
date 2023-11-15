@@ -1,9 +1,8 @@
 const { Client, GatewayIntentBits, Partials, DMChannel } = require('discord.js');
 const { token } = require('./config.json');
-//https://discord.com/api/oauth2/authorize?client_id=1127381458986750043&permissions=268437504&scope=bot
-
 const fs = require('fs');
 
+// Read alphabet from file
 var alphabet = new Array;
 fs.readFile('./alphabet.txt', 'utf-8', (err, data) => {
     if (err) {
@@ -12,6 +11,8 @@ fs.readFile('./alphabet.txt', 'utf-8', (err, data) => {
     }
     alphabet = data.split('\n');
 })
+
+// Read keywords from file
 var words = new Array;
     fs.readFile('./words.txt', 'utf-8', (err, data) => {
     if (err) {
@@ -36,6 +37,7 @@ const client = new Client({
     ]
 });
 
+// Checks for and records unread submitted votes, notifies the submitter if their vote has an error
 async function harvestVotes(message, guildId) {
     const data = require('./data/' + guildId + '_data.json');
 
@@ -43,64 +45,15 @@ async function harvestVotes(message, guildId) {
     let res = await guild.members.fetch();
 
     const mostRecent = data.lastmessage;
+    var memberNum = 0;
 
-    // Iterate over every server member that isn't a bot
-    res.forEach(async (member) => {
-        if (member.user.bot || member.id == "1127381458986750043") return;
+    // Iterate over every server member
+    for (const memberdata of res) {
+        const member = memberdata[1];
+        memberNum++;
 
-        // Check if the user has sent any DMs
-        var dmChannel;
-        try {
-            dmChannel = await member.createDM();
-        }
-        catch {
-            console.log("Could not create DM with id " + member.id + " (" + member.username + ")");
-            return;
-        }
-        const lastMessageId = dmChannel.lastMessageId;
-        if (lastMessageId === undefined) return;
-
-        // Check DM is more recent than last harvest, and edit response if so
-        if (mostRecent < lastMessageId) {
-            const recentMessages = await dmChannel.messages.fetch({ limit: 20 });
-            if (dmChannel.lastMessage.author.bot) return;
-            const filteredMessages = recentMessages.filter(message => {
-                return (message.id > mostRecent) && !message.author.bot && (member.id !== "1127381458986750043");
-            }).reverse();
-            if (filteredMessages.size > 0) {
-                var votes = new Array;
-                var num = 0;
-                filteredMessages.map(message2 => {
-                    const lines = message2.content.split('\n');
-                    for (var line in lines) {
-                        const split = lines[line].split(" ");
-                        if (split.length == 2) {
-                            votes[num] = lines[line];
-                            num++;
-                        }
-                    }
-                }
-                )
-                recordVotes(votes, guildId, dmChannel.lastMessage);
-            }
-        }
-    }  
-    )
-    data.lastmessage = message.id;
-    saveData(data, guildId);
-}
-
-async function harvest(message, guildId, technical) {
-    const data = require('./data/' + guildId + '_data.json');
-
-    const guild = client.guilds.cache.get(message.guild.id);
-    let res = await guild.members.fetch();
-
-    const mostRecent = data.lastmessage;
-
-    // Iterate over every server member that isn't a bot
-    res.forEach(async (member) => {
-        if (member.user.bot || member.id === "1127381458986750043") return;
+        // Skip bots
+        if (member.user.bot || member.id == "1127381458986750043") continue;
 
         // Check if the user has sent any DMs
         var dmChannel;
@@ -109,20 +62,94 @@ async function harvest(message, guildId, technical) {
         }
         catch {
             console.log("Could not create DM with id " + member.id + " (" + member.user.username + ")");
-            return;
+            continue;
         }
         const lastMessageId = dmChannel.lastMessageId;
-        if (lastMessageId === undefined) return;
+        if (lastMessageId === undefined) continue;
+
+        // Check if the most recent DM is more recent than last harvest, and check votes if so
+        if (mostRecent < lastMessageId) {
+
+            // Get the last 20 messages sent to the bot
+            const recentMessages = await dmChannel.messages.fetch({ limit: 20 });
+            if (dmChannel.lastMessage.author.bot) continue;
+
+            // Filters out all older messages, as well as all messages sent by the bot itself
+            const filteredMessages = recentMessages.filter(message => {
+                return (message.id > mostRecent) && !message.author.bot && (member.id !== "1127381458986750043");
+            }).reverse();
+
+            // Iterate through all remaining messages, recording all votes sent
+            if (filteredMessages.size > 0) {
+                var votes = new Array;
+                var num = 0;
+                filteredMessages.map(message2 => {
+                    // Read every line of a message
+                    const lines = message2.content.split('\n');
+                    for (var line in lines) {
+                        // Log all messages sent to the bot so I can manually fix any mistakes if they should happen
+                        console.log(member.user.username + ": " + lines[line]);
+                        const split = lines[line].split(" ");
+
+                        // Votes should only consist of 2 words, so lines with more than 2 words should be skipped 
+                        if (split.length == 2) {
+                            votes[num] = lines[line];
+                            num++;
+                        }
+                    }
+                }
+                )
+
+                // Record all read votes
+                if (num > 2) recordVotes(votes, guildId, dmChannel.lastMessage);
+            }
+        }
+    }  
+
+    console.log("Loop finished: " + memberNum + " members");
+
+    // Store the new most recent message to use for future harvests
+    data.lastmessage = message.id;
+    saveData(data, guildId);
+}
+
+// Checks for and records unread submitted responses
+async function harvest(message, guildId, technical) {
+    const data = require('./data/' + guildId + '_data.json');
+
+    const guild = client.guilds.cache.get(message.guild.id);
+    let res = await guild.members.fetch();
+
+    const mostRecent = data.lastmessage;
+    var num2 = 0;
+
+    // Iterate over every server member that isn't a bot
+    for (const memberdata of res) {
+        const member = memberdata[1];
+        num2++;
+        if (member.user.bot || member.id === "1127381458986750043") continue;
+
+        // Check if the user has sent any DMs
+        var dmChannel;
+        try {
+            dmChannel = await member.createDM();
+        }
+        catch {
+            console.log("Could not create DM with id " + member.id + " (" + member.user.username + ")");
+            continue;
+        }
+        const lastMessageId = dmChannel.lastMessageId;
+        if (lastMessageId === undefined) continue;
 
         // Check DM is more recent than last harvest, and edit response if so
         if (mostRecent < lastMessageId) {
             const recentMessages = await dmChannel.messages.fetch({ limit: 10 });
             try {
-                if (dmChannel.lastMessage.author.bot) return;
+                if (dmChannel.lastMessage.author.bot) continue;
             }
             catch {
                 console.log('dmChannel lastMessage issue\n' + dmChannel.lastMessage);
-                return;
+                continue;
             }
             const filteredMessages = recentMessages.filter(message => {
                 return (message.id > mostRecent) && !message.author.bot && (member.id !== "1127381458986750043");
@@ -133,6 +160,7 @@ async function harvest(message, guildId, technical) {
                 filteredMessages.map(async (message2) => {
                     const lines = message2.content.split('\n');
                     for (const content in lines) {
+                        console.log(member.user.username + ": " + lines[content]);
                         const split = lines[content].split(':');
                         if (split.length === 1) {
                             responses[0] = lines[content];
@@ -146,6 +174,25 @@ async function harvest(message, guildId, technical) {
                                 messageLinks[parseInt(split[0]) - 1] = message2;
                             }
                         }
+                        // else if (split[0].toLowerCase() === 'trap' || split[0].toLowerCase() === 'traps') {
+                        //     const traps = require('./data/' + guild + '_traps.json');
+                        //     if (traps[message2.author.globalName] === message) return;
+                        //     var out = "";
+                        //     const split2 = split[1].split(",");
+                        //     var words = new Array;
+                        //     for (const word in split2) {
+                        //         words.push(split2[word].replace(" ", "").toLowerCase());
+                        //         out += ", " + split2[word].replace(" ", "").toLowerCase();
+                        //     }
+                        //     traps[message2.author.globalName] = words;
+                        //     fs.writeFile('./data/' + guild + '_traps.json', JSON.stringify(traps), {flag: 'w+'}, err => {
+                        //         if (err) {
+                        //           console.error(err);
+                        //         }
+                        //     });
+                        //     message2.channel.send("Traps recorded:\n`" + out.slice(2) + 
+                        //         "`\nYou can edit your traps. When editing, please resend every trap word you wish to use");
+                        // }
                         else if (lines[content] !== "") {
                             responses[0] = lines[content];
                             messageLinks[0] = message2;
@@ -157,7 +204,9 @@ async function harvest(message, guildId, technical) {
                 }
             }
         }
-    });
+    };
+
+    console.log("Loop finished: " + num2 + " members");
 
     data.lastmessage = message.id;
     saveData(data, guildId);
@@ -165,7 +214,22 @@ async function harvest(message, guildId, technical) {
 }
 
 async function recordResponse(message, num, guild, messageLink, technical) {
-    const responses = require('./data/' + guild + '_responses.json')
+    const banlist = require('./data/output.json');
+    const userbanlist = banlist[messageLink.author.globalName];
+    if (userbanlist !== undefined) {
+        words = message.toLowerCase().replace('’', "'").replace(/[^\w\s\']/g, "").replace(/\s+/g, " ").split(' ');
+        // console.log(words)
+        for (const word in userbanlist) 
+        {
+            // console.log(userbanlist[word])
+            if (words.includes(userbanlist[word])) {
+                messageLink.channel.send("Unfortunately, your response `" + message + "` contains banned word from round 4: " + userbanlist[word] + "\nIf you believe this word should not be banned let Fred know. Remember that contractions and alternate forms counted as the same words");
+                console.log(messageLink.channel.send("War: Unfortunately, your response `" + message + "` contains banned word from round 4: " + userbanlist[word] + "\nIf you believe this word should not be banned let Fred know. Remember that contractions and alternate forms counted as the same words"));
+                return;
+            }
+        }
+    }
+    const responses = require('./data/' + guild + '_responses.json');
     if (responses[messageLink.author.globalName + " [" + (num + 1) + "]"] === message) return;
     const tech = require('./technicals/' + technical + '.js');
     const out = tech.check(message, num);
@@ -175,6 +239,7 @@ async function recordResponse(message, num, guild, messageLink, technical) {
         saveResponses(responses, guild);
         console.log('Response recorded from ' + messageLink.author.username);
     }
+    console.log("WAR: " + out.output);
     messageLink.channel.send(out.output);
 }
 
@@ -197,6 +262,7 @@ function recordVotes(votesData, guild, messageLink) {
             for (var lett in screens[split[0]]) {
                 if (!split[1].includes(lett)) {
                     valid = false;
+                    console.log("WAR: " + split[0] + ' missing letter: ' + lett);
                     messageLink.channel.send(split[0] + ' missing letter: ' + lett);
                 }
             }
@@ -204,6 +270,7 @@ function recordVotes(votesData, guild, messageLink) {
             for (var lett in split[1]) {
                 if (letters.includes(split[1].charAt(lett))) {
                     valid = false;
+                    console.log("WAR: " + split[0] + ' has duplicate letter: ' + split[1].charAt(lett));
                     messageLink.channel.send(split[0] + ' has duplicate letter: ' + split[1].charAt(lett));
                 }
                 letters.push(split[1].charAt(lett));
@@ -215,6 +282,7 @@ function recordVotes(votesData, guild, messageLink) {
             }
         }
         else {
+            console.log("WAR: " + 'Screen ' + split[0] + ' does not exist');
             messageLink.channel.send('Screen ' + split[0] + ' does not exist');
         }
 
@@ -224,7 +292,10 @@ function recordVotes(votesData, guild, messageLink) {
 
     saveVotes(votes, guild);
 
-    if (out !== '') messageLink.channel.send(out + 'Votes recorded, thanks for voting!');
+    if (out !== '') {
+        console.log("WAR: " + out + 'Votes recorded, thanks for voting!');
+        messageLink.channel.send(out + 'Votes recorded, thanks for voting!');
+    }
 }
 
 function saveData(data, guild) {
@@ -293,7 +364,8 @@ async function printVotes(message, guild) {
 
 async function makeVotingScreens(message, sections, guild, min) {
     const responsesJSON = require('./data/' + guild + '_responses.json');
-    shuffleArray(words);
+    screenwords = words;
+    shuffleArray(screenwords);
     var num = 0;
     var screens = 1;
     var out = {};
@@ -321,8 +393,8 @@ async function makeVotingScreens(message, sections, guild, min) {
                 screen[alphabet[k].slice(0,-1)] = responses[count];
                 count++;
             }
-            out[words[0].slice(0,-1)] = screen;
-            words.shift();
+            out[screenwords[0].slice(0,-1)] = screen;
+            screenwords.shift();
         }
     }
 
@@ -369,6 +441,7 @@ client.on('messageCreate', async message => {
     const guild = message.guildId
    
     if (com === "harvest") {
+        message.channel.send('Harvesting responses...');
         const time = new Date();
         if (args.length > 1) {
             await harvest(message, guild, args[1]);
@@ -379,6 +452,7 @@ client.on('messageCreate', async message => {
         message.channel.send('Harvesting complete in ' + (new Date() - time) + 'ms');
     }
     else if (com === "hvotes" || com === "harvestvotes") {
+        message.channel.send('Harvesting votes...');
         const time = new Date();
         await harvestVotes(message, guild);
         message.channel.send('Vote harvesting complete in ' + (new Date() - time) + 'ms');
