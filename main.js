@@ -174,25 +174,6 @@ async function harvest(message, guildId, technical) {
                                 messageLinks[parseInt(split[0]) - 1] = message2;
                             }
                         }
-                        // else if (split[0].toLowerCase() === 'trap' || split[0].toLowerCase() === 'traps') {
-                        //     const traps = require('./data/' + guild + '_traps.json');
-                        //     if (traps[message2.author.globalName] === message) return;
-                        //     var out = "";
-                        //     const split2 = split[1].split(",");
-                        //     var words = new Array;
-                        //     for (const word in split2) {
-                        //         words.push(split2[word].replace(" ", "").toLowerCase());
-                        //         out += ", " + split2[word].replace(" ", "").toLowerCase();
-                        //     }
-                        //     traps[message2.author.globalName] = words;
-                        //     fs.writeFile('./data/' + guild + '_traps.json', JSON.stringify(traps), {flag: 'w+'}, err => {
-                        //         if (err) {
-                        //           console.error(err);
-                        //         }
-                        //     });
-                        //     message2.channel.send("Traps recorded:\n`" + out.slice(2) + 
-                        //         "`\nYou can edit your traps. When editing, please resend every trap word you wish to use");
-                        // }
                         else if (lines[content] !== "") {
                             responses[0] = lines[content];
                             messageLinks[0] = message2;
@@ -213,15 +194,21 @@ async function harvest(message, guildId, technical) {
     return;
 }
 
+// Chacks if 
 async function recordResponse(message, num, guild, messageLink, technical) {
-    const banlist = require('./data/output.json');
+    // Get the list of banned words from the round 4 twist
+    const banlist = require('./data/banlist.json');
+
+    // Get the list of words banned for this specific contestant
     const userbanlist = banlist[messageLink.author.globalName];
+
     if (userbanlist !== undefined) {
+        // Remove all punctuation except ', set all letters to lowercase and provide a list of the words
         words = message.toLowerCase().replace('’', "'").replace(/[^\w\s\']/g, "").replace(/\s+/g, " ").split(' ');
-        // console.log(words)
+
+        // Reject the response if it uses a banned word
         for (const word in userbanlist) 
         {
-            // console.log(userbanlist[word])
             if (words.includes(userbanlist[word])) {
                 messageLink.channel.send("Unfortunately, your response `" + message + "` contains banned word from round 4: " + userbanlist[word] + "\nIf you believe this word should not be banned let Fred know. Remember that contractions and alternate forms counted as the same words");
                 console.log(messageLink.channel.send("War: Unfortunately, your response `" + message + "` contains banned word from round 4: " + userbanlist[word] + "\nIf you believe this word should not be banned let Fred know. Remember that contractions and alternate forms counted as the same words"));
@@ -229,36 +216,53 @@ async function recordResponse(message, num, guild, messageLink, technical) {
             }
         }
     }
+
+    // Fetch response file
     const responses = require('./data/' + guild + '_responses.json');
+
+    // If new response is identical to the current response by the contestant, do nothing
     if (responses[messageLink.author.globalName + " [" + (num + 1) + "]"] === message) return;
+
+    // Chech the response passes the given technical (the default technical 'pass' will always pass)
     const tech = require('./technicals/' + technical + '.js');
     const out = tech.check(message, num);
+
+    // If the response passes the technical, record it
     if (out.pass) {
         responses[messageLink.author.globalName + " [" + (num + 1) + "]"] = message;
 
         saveResponses(responses, guild);
         console.log('Response recorded from ' + messageLink.author.username);
     }
+
+    // Notify the contestant that their response has been accepted/rejected
     console.log("WAR: " + out.output);
     messageLink.channel.send(out.output);
 }
 
+// Check all votes for errors and record them
 function recordVotes(votesData, guild, messageLink) {
+    // Fetch vote file and screen file
     const votes = require('./data/' + guild + '_votes.json');
     const screens = require('./data/' + guild + '_screens.json');
     var out = ''
 
+    // Multiple votes can be recorded at once
     for (var vote in votesData) { 
         var content = votesData[vote];
+        // Remove square brackets if present
         content = content.replace('[', '').replace(']', '');
         const split = content.split(' ');
 
+        // If the vote is identical to an existing vote by the same voter, do nothing
         if (votes[messageLink.author.username + " [" + split[0] + "]"] === content) return;
 
+        // Check the voting screen exists
         if (screens[split[0]] !== undefined) {
             var letters = new Array;
             var valid = true;
 
+            // Check if the vote is missing any letters
             for (var lett in screens[split[0]]) {
                 if (!split[1].includes(lett)) {
                     valid = false;
@@ -267,6 +271,7 @@ function recordVotes(votesData, guild, messageLink) {
                 }
             }
 
+            // Check if the vote has any duplicate letters
             for (var lett in split[1]) {
                 if (letters.includes(split[1].charAt(lett))) {
                     valid = false;
@@ -276,9 +281,9 @@ function recordVotes(votesData, guild, messageLink) {
                 letters.push(split[1].charAt(lett));
             }
 
+            // Tell the voter their vote has been recorded if it is valid
             if (valid) {
                 out += 'Vote recorded on screen ' + split[0] + '\n'
-                
             }
         }
         else {
@@ -286,6 +291,7 @@ function recordVotes(votesData, guild, messageLink) {
             messageLink.channel.send('Screen ' + split[0] + ' does not exist');
         }
 
+        // Invalid votes will be recorded too because often I can fix them manually (eg, the screen name was just spelt wrong)
         console.log('Vote recorded from ' + messageLink.author.username);
         votes[messageLink.author.username + " [" + split[0] + "]"] = content;        
     }
@@ -298,6 +304,7 @@ function recordVotes(votesData, guild, messageLink) {
     }
 }
 
+// Save the given data in the given server's data file
 function saveData(data, guild) {
     fs.writeFile('./data/' + guild + '_data.json', JSON.stringify(data), {flag: 'w+'}, err => {
         if (err) {
@@ -306,6 +313,7 @@ function saveData(data, guild) {
     });
 }
 
+// Save the given responses in the given server's response file
 function saveResponses(responses, guild) {
     fs.writeFile('./data/' + guild + '_responses.json', JSON.stringify(responses), {flag: 'w+'}, err => {
         if (err) {
@@ -314,6 +322,7 @@ function saveResponses(responses, guild) {
     });
 }
 
+// Save the given votes in the given server's vote file
 function saveVotes(votes, guild) {
     fs.writeFile('./data/' + guild + '_votes.json', JSON.stringify(votes), {flag: 'w+'}, err => {
         if (err) {
@@ -322,6 +331,7 @@ function saveVotes(votes, guild) {
     });
 }
 
+// Print the entire response file in a format I can easily copy into my voting calculator
 function printResponses(message, guild) {
     const responses = require('./data/' + guild + '_responses.json');
     var num = 0;
@@ -341,6 +351,7 @@ function printResponses(message, guild) {
     });
 }
 
+// Print the entire vote file in a format I can easily copy into my voting calculator
 async function printVotes(message, guild) {
     const responses = require('./data/' + guild + '_votes.json');
     var num = 0;
@@ -355,6 +366,7 @@ async function printVotes(message, guild) {
 
     if (out.length < 1900) message.channel.send('```\n(' + num + ' votes)' + out + '```');
     else message.channel.send('Votes printed in output.txt');
+
     fs.writeFile('./output.txt', out, {flag: 'w+'}, err => {
         if (err) {
           console.error(err);
@@ -362,7 +374,10 @@ async function printVotes(message, guild) {
     });
 }
 
+// Make a voting screen with a given number of sections, and a given minum number of responses per screen
 async function makeVotingScreens(message, sections, guild, min) {
+
+    // Initialise list of responses, screen words, and necessary values
     const responsesJSON = require('./data/' + guild + '_responses.json');
     screenwords = words;
     shuffleArray(screenwords);
@@ -375,9 +390,12 @@ async function makeVotingScreens(message, sections, guild, min) {
         num++;
     }
 
+    // Generate sections
     for (let i = 0; i < sections; i++) {
         shuffleArray(responses);
 
+        // Calculate the number of screens needed in this section
+        // Earlier sections will have larger screens
         if (Math.floor(num / (i + 1)) >= min) {
             screens = i + 1;
         }
@@ -386,6 +404,7 @@ async function makeVotingScreens(message, sections, guild, min) {
             if (screens === 0) screens = 1;
         }
 
+        // Generate screens for this section
         var count = 0;
         for (let j = 0; j < screens; j++) {
             var screen = {};
@@ -398,6 +417,7 @@ async function makeVotingScreens(message, sections, guild, min) {
         }
     }
 
+    // Save the voting screen
     fs.writeFile('./data/' + guild + '_screens.json', JSON.stringify(out), {flag: 'w+'}, err => {
         if (err) {
           console.error(err);
@@ -409,6 +429,7 @@ async function makeVotingScreens(message, sections, guild, min) {
     message.channel.send('Screens printed in output.txt');
 }
 
+// Translate the voting screens into a format that I can copy into my voting calculator
 function outputVotingScreens(out) {
     var text = ''
 
@@ -434,7 +455,10 @@ client.once('ready', () => {
 })
 
 client.on('messageCreate', async message => {
+    // Ignore all messages not sent by me, and messages that aren't bot commands
     if(!(message.content.startsWith(prefix) && message.author.username === "fredsomething")) return;
+
+    // Get the command name
     const args = message.content.slice(prefix.length).split(' ');
     if (args[0] === '') {args.shift()}
     const com = args[0];
@@ -464,6 +488,7 @@ client.on('messageCreate', async message => {
         printVotes(message, guild);
     }
     else if (com === "clear") {
+        // Clear the recorded responses and votes, update the last read message
         fs.writeFile('./data/' + guild + '_responses.json', '{}', {flag: 'w'}, err => {
             if (err) {
               console.error(err);
@@ -479,6 +504,7 @@ client.on('messageCreate', async message => {
         message.channel.send('Cleared');
     }
     else if (com === "generate") {
+        // Generate voting screens from responses
         if (args.length > 1) {
             if (args.length > 2) {
                 makeVotingScreens(message, parseInt(args[1]), guild, parseInt(args[2]));
@@ -492,6 +518,7 @@ client.on('messageCreate', async message => {
         }
     }
     else if (com === "setup") {
+        // Initialise necessary files for a new server
         fs.writeFile('./data/' + guild + '_responses.json', '{}', {flag: 'w+'}, err => {
             if (err) {
               console.error(err);
@@ -514,6 +541,7 @@ client.on('messageCreate', async message => {
     }
 })
 
+// Randomise the order of an array
 function shuffleArray(array) {
     for (var i = array.length - 1; i > 0; i--) {
         var j = Math.floor(Math.random() * (i + 1));
