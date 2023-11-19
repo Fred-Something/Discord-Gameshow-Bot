@@ -1,8 +1,10 @@
+//  Code for a Discord bot used to record responses and votes for a game show hosted over Discord
+
 const { Client, GatewayIntentBits, Partials, DMChannel } = require('discord.js');
 const { token } = require('./config.json');
 const fs = require('fs');
 
-// Read alphabet from file
+// Read custom alphabet from file
 var alphabet = new Array;
 fs.readFile('./alphabet.txt', 'utf-8', (err, data) => {
     if (err) {
@@ -37,8 +39,8 @@ const client = new Client({
     ]
 });
 
-// Checks for and records unread submitted votes, notifies the submitter if their vote has an error
-async function harvestVotes(message, guildId) {
+// Iterates through all server members to check for unread messages and applies the relevant recording function to them
+async function harvest(message, guildId, harvestFunc) {
     const data = require('./data/' + guildId + '_data.json');
 
     const guild = client.guilds.cache.get(message.guild.id);
@@ -81,27 +83,7 @@ async function harvestVotes(message, guildId) {
 
             // Iterate through all remaining messages, recording all votes sent
             if (filteredMessages.size > 0) {
-                var votes = new Array;
-                var num = 0;
-                filteredMessages.map(message2 => {
-                    // Read every line of a message
-                    const lines = message2.content.split('\n');
-                    for (var line in lines) {
-                        // Log all messages sent to the bot so I can manually fix any mistakes if they should happen
-                        console.log(member.user.username + ": " + lines[line]);
-                        const split = lines[line].split(" ");
-
-                        // Votes should only consist of 2 words, so lines with more than 2 words should be skipped 
-                        if (split.length == 2) {
-                            votes[num] = lines[line];
-                            num++;
-                        }
-                    }
-                }
-                )
-
-                // Record all read votes
-                if (num > 2) recordVotes(votes, guildId, dmChannel.lastMessage);
+                await harvestFunc(filteredMessages, member, guildId, dmChannel);
             }
         }
     }  
@@ -110,91 +92,67 @@ async function harvestVotes(message, guildId) {
 
     // Store the new most recent message to use for future harvests
     data.lastmessage = message.id;
-    saveData(data, guildId);
+    writeJSON(data, guildId, 'data');
 }
 
-// Checks for and records unread submitted responses
-async function harvest(message, guildId, technical) {
-    const data = require('./data/' + guildId + '_data.json');
+// Check for new votes and record them
+async function harvestVotes(filteredMessages, member, guildId, dmChannel) {
+    var votes = new Array;
+    var num = 0;
+    filteredMessages.map(message2 => {
+        // Read every line of a message
+        const lines = message2.content.split('\n');
+        for (var line in lines) {
+            // Log all messages sent to the bot so I can manually fix any mistakes if they should happen
+            console.log(member.user.username + ": " + lines[line]);
+            const split = lines[line].split(" ");
 
-    const guild = client.guilds.cache.get(message.guild.id);
-    let res = await guild.members.fetch();
-
-    const mostRecent = data.lastmessage;
-    var num2 = 0;
-
-    // Iterate over every server member that isn't a bot
-    for (const memberdata of res) {
-        const member = memberdata[1];
-        num2++;
-        if (member.user.bot || member.id === "1127381458986750043") continue;
-
-        // Check if the user has sent any DMs
-        var dmChannel;
-        try {
-            dmChannel = await member.createDM();
-        }
-        catch {
-            console.log("Could not create DM with id " + member.id + " (" + member.user.username + ")");
-            continue;
-        }
-        const lastMessageId = dmChannel.lastMessageId;
-        if (lastMessageId === undefined) continue;
-
-        // Check DM is more recent than last harvest, and edit response if so
-        if (mostRecent < lastMessageId) {
-            const recentMessages = await dmChannel.messages.fetch({ limit: 10 });
-            try {
-                if (dmChannel.lastMessage.author.bot) continue;
+            // Votes should only consist of 2 words, so lines with more than 2 words should be skipped 
+            if (split.length == 2) {
+                votes[num] = lines[line];
+                num++;
             }
-            catch {
-                console.log('dmChannel lastMessage issue\n' + dmChannel.lastMessage);
-                continue;
+        }
+    }
+    )
+
+    // Record all read votes
+    if (num > 0) recordVotes(votes, guildId, dmChannel.lastMessage);
+}
+
+// Check for new responses and record them
+async function harvestResponses(filteredMessages, member, guildId, _, technical) {
+    var responses = new Array;
+    var messageLinks = new Array;
+    filteredMessages.map(async (message2) => {
+        const lines = message2.content.split('\n');
+        for (const content in lines) {
+            console.log(member.user.username + ": " + lines[content]);
+            const split = lines[content].split(':');
+            if (split.length === 1) {
+                responses[0] = lines[content];
+                messageLinks[0] = message2;
             }
-            const filteredMessages = recentMessages.filter(message => {
-                return (message.id > mostRecent) && !message.author.bot && (member.id !== "1127381458986750043");
-            }).reverse();
-            if (filteredMessages.size > 0) {
-                var responses = new Array;
-                var messageLinks = new Array;
-                filteredMessages.map(async (message2) => {
-                    const lines = message2.content.split('\n');
-                    for (const content in lines) {
-                        console.log(member.user.username + ": " + lines[content]);
-                        const split = lines[content].split(':');
-                        if (split.length === 1) {
-                            responses[0] = lines[content];
-                            messageLinks[0] = message2;
-                        }
-                        else if (!isNaN(parseInt(split[0]))) {
-                            if (parseInt(split[0]) < 10) {
-                                var word = lines[content].slice(2);
-                                if (word.charAt(0) === ' ') word = word.slice(1);
-                                responses[parseInt(split[0]) - 1] = word;
-                                messageLinks[parseInt(split[0]) - 1] = message2;
-                            }
-                        }
-                        else if (lines[content] !== "") {
-                            responses[0] = lines[content];
-                            messageLinks[0] = message2;
-                        }
-                    }
-                });
-                for (i = 0; i < responses.length; i++) {
-                    if (responses[i] !== undefined) await recordResponse(responses[i], i, guildId, messageLinks[i], technical);
+            else if (!isNaN(parseInt(split[0]))) {
+                if (parseInt(split[0]) < 10) {
+                    var word = lines[content].slice(2);
+                    if (word.charAt(0) === ' ') word = word.slice(1);
+                    responses[parseInt(split[0]) - 1] = word;
+                    messageLinks[parseInt(split[0]) - 1] = message2;
                 }
             }
+            else if (lines[content] !== "") {
+                responses[0] = lines[content];
+                messageLinks[0] = message2;
+            }
         }
-    };
-
-    console.log("Loop finished: " + num2 + " members");
-
-    data.lastmessage = message.id;
-    saveData(data, guildId);
-    return;
+    });
+    for (i = 0; i < responses.length; i++) {
+        if (responses[i] !== undefined) await recordResponse(responses[i], i, guildId, messageLinks[i], technical);
+    }
 }
 
-// Chacks if 
+// Check if a response passes all requirements and records it
 async function recordResponse(message, num, guild, messageLink, technical) {
     // Get the list of banned words from the round 4 twist
     const banlist = require('./data/banlist.json');
@@ -231,7 +189,7 @@ async function recordResponse(message, num, guild, messageLink, technical) {
     if (out.pass) {
         responses[messageLink.author.globalName + " [" + (num + 1) + "]"] = message;
 
-        saveResponses(responses, guild);
+        writeJSON(responses, guild, 'responses');
         console.log('Response recorded from ' + messageLink.author.username);
     }
 
@@ -296,7 +254,7 @@ function recordVotes(votesData, guild, messageLink) {
         votes[messageLink.author.username + " [" + split[0] + "]"] = content;        
     }
 
-    saveVotes(votes, guild);
+    writeJSON(votes, guild, 'votes');
 
     if (out !== '') {
         console.log("WAR: " + out + 'Votes recorded, thanks for voting!');
@@ -304,27 +262,23 @@ function recordVotes(votesData, guild, messageLink) {
     }
 }
 
-// Save the given data in the given server's data file
-function saveData(data, guild) {
-    fs.writeFile('./data/' + guild + '_data.json', JSON.stringify(data), {flag: 'w+'}, err => {
+// Save the given data in the given server's location file as a JSON object
+function writeJSON(data, guild, location) {
+    write(JSON.stringify(data), guild, location + '.json')
+}
+
+// Save the given data in the given server's location file
+function write(data, guild, location) {
+    fs.writeFile('./data/' + guild + '_' + location, data, {flag: 'w+'}, err => {
         if (err) {
           console.error(err);
         }
     });
 }
 
-// Save the given responses in the given server's response file
-function saveResponses(responses, guild) {
-    fs.writeFile('./data/' + guild + '_responses.json', JSON.stringify(responses), {flag: 'w+'}, err => {
-        if (err) {
-          console.error(err);
-        }
-    });
-}
-
-// Save the given votes in the given server's vote file
-function saveVotes(votes, guild) {
-    fs.writeFile('./data/' + guild + '_votes.json', JSON.stringify(votes), {flag: 'w+'}, err => {
+// Save a text output in output.txt
+function output(out) {
+    fs.writeFile('./output.txt', out, {flag: 'w+'}, err => {
         if (err) {
           console.error(err);
         }
@@ -342,13 +296,11 @@ function printResponses(message, guild) {
         out += name.slice(0, name.length - 4) + ' | ' + responses[contestant] + '\n';
     }
 
+    // Only post the responses as a message if it's below the character limit for Discord messages
     if (out.length < 1900) message.channel.send('```\n(' + num + ' responses)' + out + '```');
     else message.channel.send('Responses printed in output.txt');
-    fs.writeFile('./output.txt', '(' + num + ' responses)' + out, {flag: 'w+'}, err => {
-        if (err) {
-          console.error(err);
-        }
-    });
+    
+    output('(' + num + ' responses)' + out);
 }
 
 // Print the entire vote file in a format I can easily copy into my voting calculator
@@ -364,14 +316,11 @@ async function printVotes(message, guild) {
         out += name + ' | ' + responses[contestant] + '\n';
     }
 
+    // Only post the responses as a message if it's below the character limit for Discord messages
     if (out.length < 1900) message.channel.send('```\n(' + num + ' votes)' + out + '```');
     else message.channel.send('Votes printed in output.txt');
 
-    fs.writeFile('./output.txt', out, {flag: 'w+'}, err => {
-        if (err) {
-          console.error(err);
-        }
-    });
+    output(out);
 }
 
 // Make a voting screen with a given number of sections, and a given minum number of responses per screen
@@ -418,11 +367,7 @@ async function makeVotingScreens(message, sections, guild, min) {
     }
 
     // Save the voting screen
-    fs.writeFile('./data/' + guild + '_screens.json', JSON.stringify(out), {flag: 'w+'}, err => {
-        if (err) {
-          console.error(err);
-        }
-    });
+    writeJSON(out, guild, 'screens');
 
     outputVotingScreens(out);
 
@@ -441,11 +386,7 @@ function outputVotingScreens(out) {
         text += '\n';
     }
 
-    fs.writeFile('./output.txt', text, {flag: 'w+'}, err => {
-        if (err) {
-          console.error(err);
-        }
-    });
+    output(text);
 }
 
 const prefix = '-w'
@@ -464,80 +405,62 @@ client.on('messageCreate', async message => {
     const com = args[0];
     const guild = message.guildId
    
-    if (com === "harvest") {
-        message.channel.send('Harvesting responses...');
-        const time = new Date();
-        if (args.length > 1) {
-            await harvest(message, guild, args[1]);
-        }
-        else {
-            await harvest(message, guild, 'pass');
-        }
-        message.channel.send('Harvesting complete in ' + (new Date() - time) + 'ms');
-    }
-    else if (com === "hvotes" || com === "harvestvotes") {
-        message.channel.send('Harvesting votes...');
-        const time = new Date();
-        await harvestVotes(message, guild);
-        message.channel.send('Vote harvesting complete in ' + (new Date() - time) + 'ms');
-    }
-    else if (com === "responses") {
-        printResponses(message, guild);
-    }
-    else if (com === "votes") {
-        printVotes(message, guild);
-    }
-    else if (com === "clear") {
-        // Clear the recorded responses and votes, update the last read message
-        fs.writeFile('./data/' + guild + '_responses.json', '{}', {flag: 'w'}, err => {
-            if (err) {
-              console.error(err);
+    switch (com) {
+        case "harvest":
+            {
+                // Harvest all new responses
+                message.channel.send('Harvesting responses...');
+                const time = new Date();
+                // If no technical is given, 'pass' should be used
+                var harvestFunc = (filteredMessages, member, guildId, dmChannel) => 
+                    {return harvestResponses(filteredMessages, member, guildId, dmChannel, (args.length > 1 ? args[1] : 'pass'))};
+                await harvest(message, guild, harvestFunc);
+                message.channel.send('Response harvesting complete in ' + (new Date() - time) + 'ms');
+                break;
             }
-        });
-        fs.writeFile('./data/' + guild + '_votes.json', '{}', {flag: 'w'}, err => {
-            if (err) {
-              console.error(err);
+        case "hvotes":
+        case "harvestvotes":
+            {
+                // Harvest all new votes
+                message.channel.send('Harvesting votes...');
+                const time = new Date();
+                await harvest(message, guild, harvestVotes);
+                message.channel.send('Vote harvesting complete in ' + (new Date() - time) + 'ms');
+                break;
             }
-        });
-        const data = {lastmessage: message.id}
-        saveData(data, guild);
-        message.channel.send('Cleared');
-    }
-    else if (com === "generate") {
-        // Generate voting screens from responses
-        if (args.length > 1) {
-            if (args.length > 2) {
-                makeVotingScreens(message, parseInt(args[1]), guild, parseInt(args[2]));
+        case "responses":
+            printResponses(message, guild);
+            break;
+        case "votes":
+            printVotes(message, guild);
+            break;
+        case "clear":
+            {
+                // Clear the recorded responses and votes, update the last read message
+                writeJSON({}, guild, 'responses');
+                writeJSON({}, guild, 'votes');
+                const data = {lastmessage: message.id}
+                writeJSON(data, guild, 'data');
+                message.channel.send('Cleared');
+                break;
             }
-            else {
-                makeVotingScreens(message, parseInt(args[1]), guild, 10);
+        case "generate":
+            {
+                // Generate voting screens from responses
+                makeVotingScreens(message, (args.length > 1 ? parseInt(args[1]) : 1), guild, (args.length > 2 ? parseInt(args[2]) : 10));
+                break;
             }
-        }
-        else {
-            makeVotingScreens(message, 1, guild, 10);
-        }
-    }
-    else if (com === "setup") {
-        // Initialise necessary files for a new server
-        fs.writeFile('./data/' + guild + '_responses.json', '{}', {flag: 'w+'}, err => {
-            if (err) {
-              console.error(err);
+        case "setup":
+            {
+                // Initialise necessary files for a new server
+                writeJSON({}, guild, 'responses');
+                writeJSON({}, guild, 'votes');
+                writeJSON({"lastmessage":"1140044512715091988"}, guild, 'data'); // Message ID from before the bot existed
+                message.channel.send('Setup complete! Server ' + guild);
+                break;
             }
-        });
-        fs.writeFile('./data/' + guild + '_votes.json', '{}', {flag: 'w+'}, err => {
-            if (err) {
-              console.error(err);
-            }
-        });
-        fs.writeFile('./data/' + guild + '_data.json', '{"lastmessage":"1140044512715091988"}', {flag: 'w+'}, err => {
-            if (err) {
-              console.error(err);
-            }
-        });
-        message.channel.send('Setup complete! Server ' + guild);
-    }
-    else {
-        console.log(com);
+        default:
+            console.log(com);
     }
 })
 
